@@ -2,9 +2,13 @@
 
 
 
+why use joint
+
+![1675995844429](C:\Users\s00598795\AppData\Local\Temp\1675995844429.png)
 
 
-![1674962392018](C:\Users\s00598795\AppData\Local\Temp\1674962392018.png)
+
+![1674962392018](C:\Users\s00598795\AppData\Local\Temp\1675842869664.png)
 
 采用joint consensus中间配置过渡，算法保证Cold和Cnew不能单独作用，避免双主
 
@@ -26,7 +30,9 @@
 
 
 
-具体流程：
+具体流程： // restore 流程？
+
+prop用两阶段提交？
 
 **a.** leader收到msg.prop, append到raftlog unstable（raft会开启协程将unstable复制到wal进行持久化，follower同理）, 然后发送msg.append消息广播给 r.progress（tracker）里面节点（尚未更新，Cold节点）
 
@@ -55,7 +61,9 @@
 **c.**   leader收到follower回复的MsgAppResp以后，首先判断如果follower reject了日志，就把Progress的Next减回到Match+1，从已经确定同步的日志开始从新发送日志。如果没有reject日志，就用刚刚已经发送的日志index更新Progess的Match和Next，下一次发送日志就可以从新的Next开始了。然后调用maybeCommit把多数节点同步的日志设置为commited。
 
 
-**d.**得知该entry commited， Cold new commited ?? how //  leader收到msg.pro 就执行applytoconfig进去enterjoint
+**d.**得知该entry commited， Cold new commited ?? how //  leader收到follwer appendresp 计算是否大多数，如果是，生成ready结构体，存进commited字段放到channel里通知应用层，应用层通过commited字段知道是entry成功提交的信息
+
+
 
 applytoconfig（该entry entry有confchangev2信息），进入enterjoint，根据配置变更消息更新tracker.config
 
@@ -105,7 +113,7 @@ Cnew=incoming=voters[0] ,Cold=outgoing=voters[1]
 
 ​       新数据返回给r.prs，节点更新，leader配置进入ColdCnew阶段       //  通知新raft节点，initraft？
 
-**e.** 等到Cold节点全部commit Cold和Cnew时 (?是否)， 生成空change的msg.prop， 退出joint consensus    //  how , to be checked， 对比raft 
+**e.** 等到全部commit Cold和Cnew时 (?是否)， 生成空change的msg.prop， 退出joint consensus    //  how , to be checked， 对比raft 
 
 **f.**  待该entry commited，leave joint 清空progress outgoing集合           
 
@@ -117,17 +125,33 @@ Cnew=incoming=voters[0] ,Cold=outgoing=voters[1]
 
 
 
+leavejoint分为两种
+
+auto leave时机可为Cold&Cnew这个entry被commited且被持久化// Coldnew Commited之后，accept ready  发空entry即发cnew
 
 
 
+第一种是自动leave，当ColdCnew entry commited， 生成ready通知应用层，此时apply进入joint，switch配置，通知新节点init
+
+
+
+当收到pb.MsgStorageApplyResp 调raft appliedto（）， 此时判断是否autoleave，如果是step一个空的confchange通知leave
+
+
+
+等到这个entry commited，change为空，用该entry，是个空的entry confchange v2， 调applyconfchange 更新到Cnew
+
+
+
+第二种根据应用层手动发空  // dont need 
 
 
 
 tips：
 
-raft调 advance，rn.stepsOnadvance存储的pb，step（）处理，里面应该有空change confchange的pb
+//raft调 advance，rn.stepsOnadvance存储的pb，step（）处理，里面应该有空change confchange的pb
 
-如果是autoleave，会在空entrycommit时候，会往advance里面塞空entry，需要调advance，来发 （和手动一样？）
+//如果是autoleave，会在空entrycommit时候，会往advance里面塞空entry，需要调advance，来发 
 
 
 
@@ -141,7 +165,30 @@ leader，follower收到commit entry之后都会调applyconfchange生效Cold&new 
 
 
 
+tikv:
 
+1. RawNode 是 raft-rs 库与应用交互的主要界面。要在自己的应用中使用 raft-rs，首先就需要持有一个 RawNode 实例，正如 Node 结构体所做的那样。
+2. RawNode 的范型参数是一个满足 Storage 约束的类型，可以认为是一个存储了 Raft Log 的存储引擎，示例中使用的是 MemStorage。
+3. 在收到 Raft 消息之后，调用 `RawNode::step`方法来处理这条消息。
+4. 每隔一段时间（称为一个 tick），调用 `RawNode::tick`方法使 Raft 的逻辑时钟前进一步。
+5. 使用 `RawNode::ready`接口从 Raft 中获取收到的最新日志（`Ready::entries`），已经提交的日志（`Ready::committed_entries`），以及需要发送给其他节点的消息等内容。
+6. 在确保一个 Ready 中的所有进度被正确处理完成之后，调用 `RawNode::advance`接口。
+
+
+
+
+
+进入 Joint 状态本身就是一条 log entry；解除 Joint 状态也是一条 log entry
+
+进入 Joint 状态需要满足前状态 {a,b,c} 的 majority
+
+在 Joint 状态中，选举和 log entry commit 都需满足前状态 {a,b,c} 和后状态 {a,b,d} 的 majorities
+
+如果在 Joint 状态中丢失了 Leader 但仍能满足前后状态的 majorities，就可以选出新的 Leader
+
+// process tracker 给出 投票结果
+
+解除 Joint 状态需要满足前状态 {a,b,c} 和后状态 {a,b,d} 的 majorities
 
 
 
@@ -167,24 +214,49 @@ enum ConfOp {
 }
 ```
 
+entry type?
+
+message Entry {
+    uint64 term  = 1;
+    uint64 index = 2;
+    oneof  value {
+        BlockMetadata block      = 3;
+        ConfChange    confChange = 4;
+    }
+    bytes signature  = 5;
+    bytes blockBytes = 6;
+}
+
+```
+enum EntryType {
+   EntryNormal       = 0;
+   EntryConfChange   = 1; // corresponds to pb.ConfChange
+   EntryConfChangeV2 = 2; // corresponds to pb.ConfChangeV2
+}
+```
+
 
 
 新增
 
 ```
 message ConChangeV2 {
-   ConfChange change = 1;  // shuzu
-   ConfChangeTransition transition = 2;
+   repeated ConfChange change = 1;
+   bytes context = 2;
 }
 
-enum ConfChangeTransition {
-    ConfChangeTransitionAuto         = 0;
-   ConfChangeTransitionJointImplicit = 1;       // 
-   ConfChangeTransitionJointExplicit = 2;
+//enum ConfChangeTransition {
+  //  ConfChangeTransitionAuto         = 0;
+ //  ConfChangeTransitionJointImplicit = 1;       // 
+ //  ConfChangeTransitionJointExplicit = 2;
 }
 ```
 
-`ConfChange`仅支持“one node a time”的简单算法，这里不再赘述，仅介绍`ConfChangeV2`中支持的配置变更类型。
+
+
+// 不需要，默认自动leave就行
+
+`ConfChange`仅支持“one node a time”的简单算法，不再赘述，仅介绍`ConfChangeV2`中支持的配置变更类型。
 
 `ConfChangeV2`的`Transition`字段表示切换配置的行为，其支持的行为有3种：   //  单节点 和 多节点 流程区别
 
@@ -200,38 +272,47 @@ etcd/raft  apply - enterjoint -
 2. `ConfChangeRemoveNode`：移除节点。
 3. `ConfChangeAddLearnerNode`：添加learner节点。
 
+// 是否需要updatelearner updatevoter?
+
+
+
 
 
 #### MajorityConfig
 
 中间态Cold,Cnew 需要 各自的majority
 
-配置中voter的集合（voter即有投票权的角色，包括candidate、follower、leader，而不包括learner），是通过`MajorityConfig`表示的，`MajorityConfig`还包括了一些统计majority信息的方法 
+配置中voter的集合（voter即有投票权的角色，包括candidate、follower、leader，而不包括learner），是通过`MajorityConfig`表示的，`MajorityConfig`还包括了一些统计majority信息的方法
+
+
 
 ```
-type MajorityConfig map[uint64]struct{}
+pub struct MajorityConfig {
+    voters: HashSet<u64>,
+}
 ```
 
+主要实现两个方法
 
-
-| 方法                                           | 描述                                                         |
-| ---------------------------------------------- | ------------------------------------------------------------ |
-| `CommittedIndex(l AckedIndexer) Index`         | 根据给定的`AckedIndexer`计算被大多数节点接受了的*commit index* 。 |
-| `VoteResult(votes map[uint64]bool) VoteResult` | 根据给定的投票统计计算投票结果。                             |
-
-
+| 方法                                                         | 描述                                                         |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| pub fn committed_index(&self, l: &impl AckedIndexer) -> u64  | 根据给定的`AckedIndexer`计算被大多数节点接受了的*commit index* 。从tracker获得follower的match index， 通过n - (n/2+1)获得commited index |
+| pub fn vote_result(&self, check: impl Fn(u64) -> Option<bool>) -> quorum::VoteResult | 根据给定的投票统计计算投票结果。根据tracker voter bool hash表获得投票结果 |
 
 
 
 #### JointConfig
 
-表示Cold && Cnew
+incoming表示Cnew，outgoing表示Cold，非joint consensus 为空？？
 
 ```
-type JointConfig [2]MajorityConfig
+pub struct JointConfig {
+    pub(crate) incoming: MajorityConfig,
+    pub(crate) outgoing: MajorityConfig,
+}
 ```
 
-[0]表示Cnew，[1]表示Cold，非joint consensus 为空
+
 
 | 方法                                           | 描述                                       |
 | ---------------------------------------------- | ------------------------------------------ |
@@ -242,3 +323,12 @@ type JointConfig [2]MajorityConfig
 
 Config
 
+![1675933956283](C:\Users\s00598795\AppData\Local\Temp\1675933956283.png)
+
+
+
+
+
+使用
+
+raft joint扩缩容支持节点的批量扩容或缩容，支持批量操作中既有增加又有删除，对应操作命令如下： 
