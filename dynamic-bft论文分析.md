@@ -13,8 +13,10 @@ why n=3f+1,
   6.新leader收到2f+1 viewchange 开启新view，接受request重复1
 
 libra-bft论文中给出公式满足前后quorum即可批量增删扩缩容
-f1 = N1/3 − 1, f2 = N2|/3 − 1 
+f1 = (N1/3)向上取整 − 1, f2 = （N2|/3）向上取整 − 1 
 满足|N1 ∩ N2| > f1 + f2 + max(f1, f2)即可
+
+
 
 活性，安全性，实现细节见reference
 
