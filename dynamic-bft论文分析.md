@@ -1,7 +1,10 @@
 ## 简述
 
-2022 dymic bft简述了动态退出加入流程，并没有关于批量节点的加入退出限制，基本流程如下
+why n=3f+1,
+节点总数是n，其中作恶节点有f，那么剩下的正确节点为n - f，意味着只要收到n - f个消息就能做出决定（所以后面要对f做出限定条件），但是这n - f个消息有可能由f个是由作恶节点（作恶节点也可以什么都不干）冒充的，那么正确的消息就是n - f - f（最恶劣的情况下）个，为了多数一致，正确消息必须占多数，也就是n - f - f > f但是节点必须是整数个，所以n最少是3f+1个
 
+
+2022 dymic bft简述了动态退出加入流程，并没有关于批量节点的加入退出限制，基本流程如下
 1. client obtainconfig， 发送request（含cid）
 2. vo c0 leader prepare 阶段收到request，发现是一个membership request, 调用init(),  如果是add，通知新节点起来为learner（让learner同步区块）， remove不变
 3. 经过pre-commit,commit
