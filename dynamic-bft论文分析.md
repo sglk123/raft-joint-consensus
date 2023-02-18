@@ -1,8 +1,8 @@
 ## 简述
 
 why n=3f+1,
-For correctness, any two quorums must intersect at least
-one honest node: (N-f) + (N-f) - N >= f+1 N >= 3f+1
+**For correctness, any two quorums must intersect at least
+one honest node: (N-f) + (N-f) - N >= f+1 N >= 3f+1**
 
 
 2022 dymic bft简述了动态退出加入流程，并没有关于批量节点的加入退出限制，基本流程如下
